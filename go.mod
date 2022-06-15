@@ -1,4 +1,4 @@
-module github.com/semicontinuity/dictator_08_product
+module github.com/semicontinuity/dictator
 
 go 1.18
 

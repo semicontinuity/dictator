@@ -11,17 +11,19 @@ import (
 )
 
 var (
-	midiDevice    string
-	ycToken       string
-	folderID      string
-	lang          string
+	midiDevice string
+	ycToken    string
+	folderID   string
+	key1lang   string
+	key2lang   string
 )
 
 func init() {
 	pflag.StringVar(&midiDevice, "midi-device", "MidiStomp", "MIDI Device name")
 	pflag.StringVar(&ycToken, "token", "", "Yandex Cloud OAuth token")
 	pflag.StringVar(&folderID, "folder-id", "", "Yandex Cloud folder ID")
-	pflag.StringVar(&lang, "lang", "en-US", "Language to detect")
+	pflag.StringVar(&key1lang, "key1-lang", "en-US", "Language to detect when first key is pressed")
+	pflag.StringVar(&key2lang, "key2-lang", "ru-RU", "Language to detect when second key is pressed")
 	level := pflag.String("log-level", "INFO", "Logrus log level (DEBUG, WARN, etc.)")
 	pflag.Parse()
 
@@ -39,18 +41,25 @@ func init() {
 }
 
 func main() {
-	control := make(chan bool, 1)
+	control := make(chan string, 1)
 
-	listener := NewPedalListener(midiDevice, func(pressed bool) {
-        control <- pressed
-    })
-    defer listener.Close()
+	listener := NewMidiControllerHandler(midiDevice, func(keyIndex uint8, pressed bool) {
+		var command = "" // Empty string is STOP
+		if pressed {
+			if keyIndex == 0 {
+				command = key1lang
+			} else {
+				command = key2lang
+			}
+		}
+		control <- command
+	})
+	defer listener.Close()
 
-    launcher(control)
+	launcher(control)
 }
 
-
-func launcher(control chan bool) {
+func launcher(control chan string) {
 	kb, err := kbd.NewKeyBonding()
 	if err != nil {
 		panic(any(err))
@@ -62,8 +71,11 @@ func launcher(control chan bool) {
 
 	for {
 		// =====================================================================
-		cmd1 := <-control	// START(true) is expected
-		if !cmd1 { continue }
+		lang := <-control // Language code is expected
+		if lang == "" {
+			continue
+		}
+		log.Infof("Starting, language: %v", lang)
 		// =====================================================================
 		sigFinish := make(chan os.Signal, 1)
 		audioStream := make(chan []byte, 4)
@@ -73,11 +85,11 @@ func launcher(control chan bool) {
 		go recognize(ycToken, folderID, lang, audioStream, textStream, sigFinish)
 		log.Infof("Awaiting command to stop")
 		// =====================================================================
-		<-control	// STOP(false) is expected, but stop anyway
+		<-control // STOP("") is expected, but stop on any message
 		// =====================================================================
 		log.Infof("Stopping")
 		sigFinish <- syscall.SIGINT
-		typeKeys(kb, textStream)
+		typeKeys(kb, lang, textStream)
 		log.Infof("Stopped")
 	}
 }
